@@ -1,0 +1,85 @@
+name: "${COMPOSE_PROJECT_NAME}"
+
+#######################################
+########## Description ################
+#
+# ----- CORE ARCANE LOCAL -----
+# Панель управления Docker
+#
+#######################################
+
+############################
+########## ANCHORS #########
+x-logging: &default_logging
+  driver: "local"
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-security: &default_security
+  cap_drop:
+    - ALL
+  # read_only отключен, так как Arcane может
+  # требовать запись во временные директории фреймворка SvelteKit.
+  security_opt:
+    - no-new-privileges:true
+
+####################################
+########## SETUP SERVICES ##########
+services:
+
+  #--------- ARCANE - Менеджер контейнеров ---------#
+  arcane:
+    image: ${ARCANE_IMAGE}
+    container_name: ${COMPOSE_PROJECT_NAME}-app
+    <<: *default_security
+    cpu_shares: 512
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+          pids: 100
+        reservations:
+          cpus: '0.10'
+          memory: 64M
+    environment:
+      - APP_URL=${APP_URL}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - PROJECTS_DIRECTORY=${PROJECTS_DIRECTORY}
+    volumes:
+      - arcane_data:/app/data
+      # Прямое подключение к сокету с правами чтения/записи (rw)
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      # Симметричное монтирование директории с проектами (обязательно для Arcane)
+      - ${PROJECTS_DIRECTORY}:${PROJECTS_DIRECTORY}:rw
+    # Необходимо для корректного сбора метрик контейнеров
+    cgroup: host
+    logging: *default_logging
+    networks:
+      - web_net
+    ports:
+      - "${HOST_IP:?Не задан HOST_IP в файле .env}:${ARCANE_HTTP_PORT:-3552}:3552"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3552"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+###################################
+########## SETUP VOLUMES ##########
+volumes:
+  arcane_data:
+    name: ${COMPOSE_PROJECT_NAME}_data
+
+###################################
+########## SETUP NETWORKS #########
+networks:
+  # Сеть для публикации веб-интерфейса Arcane
+  web_net:
+    name: ${COMPOSE_PROJECT_NAME}_web_net
+    driver: bridge
